@@ -1,0 +1,341 @@
+{
+  "name": "Registrar Postulacion",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Registrar postulación",
+        "formDescription": "Pega el link y la descripción del aviso al postular.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Link del aviso",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Empresa"
+            },
+            {
+              "fieldLabel": "Cargo"
+            },
+            {
+              "fieldLabel": "Descripción del cargo",
+              "fieldType": "textarea",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Renta pedida"
+            },
+            {
+              "fieldLabel": "Plataforma",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "LinkedIn"
+                  },
+                  {
+                    "option": "Indeed"
+                  },
+                  {
+                    "option": "Laborum"
+                  },
+                  {
+                    "option": "Get on Board"
+                  },
+                  {
+                    "option": "Trabajando.com"
+                  },
+                  {
+                    "option": "Portal empresa"
+                  },
+                  {
+                    "option": "Referido"
+                  },
+                  {
+                    "option": "Correo directo"
+                  },
+                  {
+                    "option": "Headhunter"
+                  },
+                  {
+                    "option": "Otro"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Notas",
+              "fieldType": "textarea"
+            },
+            {
+              "fieldLabel": "Fecha de postulación",
+              "fieldType": "date"
+            }
+          ]
+        },
+        "options": {
+          "path": "registrar-postulacion"
+        }
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -1008,
+        -352
+      ],
+      "id": "5cac6815-ea51-4300-8eed-2cddd9894d6f",
+      "name": "On form submission1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const slug = s => (s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n  .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);\n\nreturn $input.all().flatMap(item => {\n  const f = item.json;\n  const campo = n => (f[n] || '').toString().trim();\n\n  // Sin link no se escribe nada (protección)\n  let link = campo('Link del aviso'), m;\n  if (!link) return [];\n\n  // Link normalizado igual que en el flujo de Gmail, para que calcen\n  if ((m = link.match(/jobs\\/view\\/(\\d+)/) || link.match(/currentJobId=(\\d+)/))) {\n    link = 'https://www.linkedin.com/jobs/view/' + m[1] + '/';\n  } else if ((m = link.match(/[?&]v?jk=([0-9a-f]{16})/i))) {\n    link = 'https://cl.indeed.com/viewjob?jk=' + m[1];\n  }\n\n  const empresa = campo('Empresa'), cargo = campo('Cargo');\n  const fechaForm = campo('Fecha de postulación').slice(0, 10);\n\n  // Solo se envían los campos con datos, para no borrar lo que ya está en la fila\n  const fila = { Link: link, Estado: 'Postulado' };\n  if (fechaForm) fila.Fecha = fechaForm;\n  if (campo('Descripción del cargo')) fila['Descripción del cargo'] = campo('Descripción del cargo');\n  if (empresa) fila.Empresa = empresa;\n  if (cargo) fila.Cargo = cargo;\n  if (empresa && cargo && fechaForm) fila.ID = slug(empresa) + '-' + slug(cargo) + '-' + fechaForm.replace(/-/g, '');\n  if (campo('Renta pedida')) fila.Renta = campo('Renta pedida');\n  if (campo('Plataforma')) fila.Plataforma = campo('Plataforma');\n  if (campo('Notas')) fila.Notas = campo('Notas');\n\n  return [{ json: fila }];\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        -112
+      ],
+      "id": "a9906234-94d0-40fd-83c1-2efb84f92e5e",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "TU_ID_DE_GOOGLE_SHEET",
+          "mode": "list",
+          "cachedResultName": "Postulaciones"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "TU_ID_DE_HOJA",
+          "mode": "list",
+          "cachedResultName": "Postulaciones"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Link"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Fecha",
+              "displayName": "Fecha",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Familia",
+              "displayName": "Familia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Rubro",
+              "displayName": "Rubro",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Ubicación",
+              "displayName": "Ubicación",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Calce %",
+              "displayName": "Calce %",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Prioridad",
+              "displayName": "Prioridad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Estado",
+              "displayName": "Estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Renta",
+              "displayName": "Renta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Plataforma",
+              "displayName": "Plataforma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Red / contacto",
+              "displayName": "Red / contacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Notas",
+              "displayName": "Notas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Descripción del cargo",
+              "displayName": "Descripción del cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -144,
+        -320
+      ],
+      "id": "144c951a-678d-4299-ae1c-7e385c81322d",
+      "name": "Append or update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TU_CREDENCIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}

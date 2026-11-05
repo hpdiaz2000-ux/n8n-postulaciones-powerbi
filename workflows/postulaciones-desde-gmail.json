@@ -1,0 +1,805 @@
+{
+  "name": "Postulaciones desde Gmail",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "subject:(\"se ha enviado tu solicitud\" OR \"Postulación en Indeed\" OR \"Ya recibieron tu postulación\" OR \"Tu solicitud para el puesto de\")"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1200,
+        -448
+      ],
+      "id": "b8a58af2-7597-4f50-92ef-006a7ab2a217",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "TU_CREDENCIAL",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const slug = s => (s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n  .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);\n\nfunction familia(c) {\n  c = (c || '').toLowerCase();\n  if (/business partner|estrategia ti|transformaci/.test(c)) return 'Business Partner TI / Datos';\n  if (/datos|data|\\bbi\\b|business intelligence|analytics|power bi|anal[ií]tica/.test(c)) return 'BI y Datos';\n  if (/proyecto|project|pmo/.test(c)) return 'Proyectos TI';\n  if (/soporte|mesa|service desk|servicios|operaciones|infraestructura|site lead|incidentes|encargad|jefe ti/.test(c)) return 'Gestión de servicios TI';\n  return '';\n}\n\nfunction rubro(e) {\n  e = (e || '').toLowerCase();\n  if (/miner|mining|codelco|collahuasi|bhp|anglo|antofagasta|sqm|escondida|teck|kinross/.test(e)) return 'Minería';\n  if (/pharma|farma|laboratorio|gr[uü]nenthal|abbott|roche|novartis|bayer|medical|m[eé]dic/.test(e)) return 'Insumos médicos / Farma';\n  return 'Otro';\n}\n\nfunction htmlATexto(html) {\n  return (html || '')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/(p|div|tr|td|li|h\\d)>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<').replace(/&gt;/g, '>');\n}\n\nreturn $input.all().map(item => {\n  const j = item.json;\n  const headers = (j.payload && j.payload.headers) || [];\n  const h = n => (headers.find(x => x.name.toLowerCase() === n) || {}).value || '';\n  const asunto = j.subject || j.Subject || h('subject') || '';\n  const cuerpo = j.text || htmlATexto(j.html) || j.snippet || '';\n  const todo = asunto + '. ' + cuerpo + ' ' + (j.html || '');\n  const cuando = j.date ? new Date(j.date) : new Date(Number(j.internalDate) || Date.now());\n  const fecha = cuando.toLocaleDateString('sv-SE', { timeZone: 'America/Santiago' });\n  const lineas = cuerpo.split('\\n')\n    .map(s => s.replace(/[\\u034f\\u200b-\\u200d\\ufeff\\u00a0]/g, ' ').trim())\n    .filter(Boolean);\n  // sin líneas de imágenes ni de links\n  const limpias = lineas.filter(l => !/^\\[image:.*\\]$/i.test(l) && !/^<?https?:\\/\\//i.test(l));\n\n  let plataforma = 'Otro', empresa = '', cargo = '', ubicacion = '', link = '', estado = 'Postulado', m;\n\n  if ((m = asunto.match(/Tu solicitud para el puesto de (.+) en (.+)$/i))) {\n    // Rechazo de LinkedIn\n    plataforma = 'LinkedIn'; cargo = m[1].trim(); empresa = m[2].trim(); estado = 'Rechazado';\n\n  } else if ((m = (asunto + '. ' + cuerpo).match(/se ha enviado tu solicitud a ([^.\\n]+)/i))) {\n    // Confirmación de LinkedIn: Cargo / Empresa / Ubicación  o  Cargo / Empresa · Ubicación\n    plataforma = 'LinkedIn'; empresa = m[1].trim();\n    const emp = empresa.toLowerCase();\n    const k = limpias.findIndex(l => {\n      const x = l.toLowerCase();\n      return x === emp || x.startsWith(emp + ' ·');\n    });\n    if (k > 0) {\n      const anterior = limpias[k - 1];\n      if (!/se ha enviado tu solicitud/i.test(anterior)) cargo = anterior;\n      if (limpias[k].includes('·')) {\n        ubicacion = limpias[k].split('·').slice(1).join('·').trim();\n      } else {\n        const siguiente = limpias[k + 1] || '';\n        if (siguiente && !/^Ver anuncio/i.test(siguiente)) ubicacion = siguiente;\n      }\n    }\n    const id = todo.match(/jobs\\/view\\/(\\d+)/);\n    if (id) link = 'https://www.linkedin.com/jobs/view/' + id[1] + '/';\n\n  } else if ((m = asunto.match(/Postulación en Indeed:\\s*(.+)/i))) {\n    // Confirmación de Indeed\n    plataforma = 'Indeed'; cargo = m[1].trim();\n    const jk = todo.match(/jk=([0-9a-f]{16})/i);\n    if (jk) link = 'https://cl.indeed.com/viewjob?jk=' + jk[1];\n\n  } else if (/recibieron tu postulación/i.test(asunto + ' ' + cuerpo)) {\n    // Confirmación de Laborum\n    plataforma = 'Laborum';\n    const i = limpias.findIndex(l => /^\\W*Te postulaste a/i.test(l));\n    if (i >= 0 && limpias[i + 1]) cargo = limpias[i + 1];\n  }\n\n  const salida = {\n    ID: slug(empresa || plataforma) + '-' + slug(cargo) + '-' + fecha.replace(/-/g, ''),\n    Fecha: fecha,\n    Empresa: empresa,\n    Cargo: cargo,\n    Familia: familia(cargo),\n    Rubro: rubro(empresa),\n    'Ubicación': ubicacion,\n    Estado: estado,\n    Plataforma: plataforma,\n    Link: link\n  };\n  // La nota automática solo va en filas sin link, para no pisar tus notas del formulario\n  if (!link) salida.Notas = 'Auto n8n: ' + asunto;\n  return { json: salida };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        -96
+      ],
+      "id": "642b3059-beea-45ff-bb75-8a8d2e1d663b",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.Estado }}",
+                    "rightValue": "Postulado",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "6c728702-9924-430a-96ed-6f2032705249"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Postulado"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "dc2e0163-f338-4779-a9db-8e32847f09e9",
+                    "leftValue": "={{ $json.Estado }}",
+                    "rightValue": "Rechazado",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Rechazado"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        -736,
+        -352
+      ],
+      "id": "a00cc8f8-af0e-4886-86ed-6977b0f5a763",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "TU_ID_DE_GOOGLE_SHEET",
+          "mode": "list",
+          "cachedResultName": "Postulaciones"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "TU_ID_DE_HOJA",
+          "mode": "list",
+          "cachedResultName": "Postulaciones"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Estado": "={{ $json.Estado }}",
+            "Cargo": "={{ $json.Cargo }}"
+          },
+          "matchingColumns": [
+            "Cargo"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Fecha",
+              "displayName": "Fecha",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Familia",
+              "displayName": "Familia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Rubro",
+              "displayName": "Rubro",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Ubicación",
+              "displayName": "Ubicación",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Calce %",
+              "displayName": "Calce %",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Prioridad",
+              "displayName": "Prioridad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Estado",
+              "displayName": "Estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Renta",
+              "displayName": "Renta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Plataforma",
+              "displayName": "Plataforma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Red / contacto",
+              "displayName": "Red / contacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Notas",
+              "displayName": "Notas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -672,
+        64
+      ],
+      "id": "1eb698aa-2781-47e2-bd2f-5b63e62fa36c",
+      "name": "Update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TU_CREDENCIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "88b844b0-8591-42e7-b45b-dbbfe3de5037",
+              "leftValue": "={{ $('Code in JavaScript').item.json.Link }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        -464,
+        -384
+      ],
+      "id": "dcfc9948-44db-411a-af50-39cee80de570",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "TU_ID_DE_GOOGLE_SHEET",
+          "mode": "list",
+          "cachedResultName": "Postulaciones"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "TU_ID_DE_HOJA",
+          "mode": "list",
+          "cachedResultName": "Postulaciones"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Link"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Fecha",
+              "displayName": "Fecha",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Familia",
+              "displayName": "Familia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Rubro",
+              "displayName": "Rubro",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Ubicación",
+              "displayName": "Ubicación",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Calce %",
+              "displayName": "Calce %",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Prioridad",
+              "displayName": "Prioridad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Estado",
+              "displayName": "Estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Renta",
+              "displayName": "Renta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Plataforma",
+              "displayName": "Plataforma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Red / contacto",
+              "displayName": "Red / contacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Notas",
+              "displayName": "Notas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -32,
+        -432
+      ],
+      "id": "781dbf09-b2f6-4434-9149-656c4c4e5e0d",
+      "name": "Append or update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TU_CREDENCIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "TU_ID_DE_GOOGLE_SHEET",
+          "mode": "list",
+          "cachedResultName": "Postulaciones"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "TU_ID_DE_HOJA",
+          "mode": "list",
+          "cachedResultName": "Postulaciones"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Link"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Fecha",
+              "displayName": "Fecha",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Familia",
+              "displayName": "Familia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Rubro",
+              "displayName": "Rubro",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Ubicación",
+              "displayName": "Ubicación",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Calce %",
+              "displayName": "Calce %",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Prioridad",
+              "displayName": "Prioridad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Estado",
+              "displayName": "Estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Renta",
+              "displayName": "Renta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Plataforma",
+              "displayName": "Plataforma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Red / contacto",
+              "displayName": "Red / contacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notas",
+              "displayName": "Notas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Descripción del cargo",
+              "displayName": "Descripción del cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -48,
+        -96
+      ],
+      "id": "43bb2f1c-c65d-45e3-88a7-b5edbd281761",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TU_CREDENCIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}
